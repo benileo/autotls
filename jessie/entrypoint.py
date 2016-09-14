@@ -7,6 +7,8 @@ import sys
 
 logging.basicConfig(level=logging.INFO)
 
+LIVE_DIR = "/etc/letsencrypt/live"
+
 certbot_cmd = [
     "certbot",
     "certonly",
@@ -16,8 +18,27 @@ certbot_cmd = [
     "--post-hook", "post-hook.sh",
 ]
 
+# template
+server_conf = """
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {} {};
+    ssl_certificate {};
+    ssl_certificate_key {};
+
+    # If there is a conf file, these directives will
+    # be added into the server block. If there is
+    # no include directive here then you need to 
+    # create a conf file mounted in a volume in
+    # /etc/nginx/conf.d/custom/
+    {}
+}
+"""
+
 # This is the default entrypoint for the nginx
-# dockerfile
+# dockerfile, we have work to do before we
+# call this
 nginx_cmd = ["nginx", "-g", "daemon off;"]
 
 def fail_with_error_message(msg):
@@ -26,10 +47,18 @@ def fail_with_error_message(msg):
 
 
 def certificates_exist(domain):
-    live_dir = "/etc/letsencrypt/live"
-    cert_path = os.path.join(live_dir, domain, "cert.pem")
-    full_chain_path = os.path.join(live_dir, domain, "fullchain.pem")
+    cert_path = os.path.join(LIVE_DIR, domain, "cert.pem")
+    full_chain_path = os.path.join(LIVE_DIR, domain, "fullchain.pem")
     return os.path.exists(cert_path) and os.path.exists(full_chain_path)
+
+
+def dh_params_exist():
+    return os.path.exists('/etc/ssl/certs/dhparam.pem')
+
+
+def create_dh_params():
+    subprocess.check_call(["openssl", "dhparam" ,"-out", 
+        "/etc/ssl/certs/dhparam.pem", "2048"])
 
 
 def obtain_certs():
@@ -38,6 +67,14 @@ def obtain_certs():
     except subprocess.CalledProcessError as err:
         fail_with_error_message("Command failed: {}".format(
             " ".join(certbot_cmd)))
+
+
+def create_conf(domain):
+    www_domain = ""
+    if domain[:3] != "www":
+        www_domain += "www" + domain
+    server_conf.format(
+        domain)
 
 
 def main():
@@ -61,12 +98,19 @@ def main():
     if os.getenv("DEBUG"):
         certbot_cmd.extend(["-vvv", "--text"])
 
+    if not dh_params_exist():
+        create_dh_params()
+
     if not certificates_exist(domain):
         logging.info("Certificates for {} don't exist yet".format(
             domain))
         obtain_certs()
 
-    # run nginx forever
+    # create the nginx conf file to reflect the new configuration
+    create_conf(domain)
+
+    # call default nginx entrypoint, there is
+    # no way to update this dynamically
     logging.info("Starting nginx")
     subprocess.check_call(nginx_cmd)
 
