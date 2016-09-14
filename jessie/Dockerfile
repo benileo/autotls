@@ -17,7 +17,7 @@
 # docker-compose run -e FAKE_DNS=172.17.0.1 --service-ports boulder ./start.py
 FROM nginx:1.11.3
 
-MAINTAINER Ben Irving "ben@letsencrypt.org"
+MAINTAINER Ben Irving "jammin.irving@gmail.com"
 
 RUN echo "deb http://ftp.debian.org/debian jessie-backports main" \ 
 	> /etc/apt/sources.list.d/certbot.list \
