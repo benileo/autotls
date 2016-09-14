@@ -18,28 +18,45 @@ certbot_cmd = [
     "--post-hook", "post-hook.sh",
 ]
 
+# This is the default entrypoint for the nginx
+# dockerfile, we have work to do before we
+# call this
+nginx_cmd = ["nginx", "-g", "daemon off;"]
+
 # template
 server_conf = """
-server {
+server {{
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name {} {};
-    ssl_certificate {};
-    ssl_certificate_key {};
+    server_name {0};
+    ssl_certificate {1};
+    ssl_certificate_key {2};
 
     # If there is a conf file, these directives will
     # be added into the server block. If there is
     # no include directive here then you need to 
     # create a conf file mounted in a volume in
     # /etc/nginx/conf.d/custom/
-    {}
-}
+    {3}
+}}
 """
 
-# This is the default entrypoint for the nginx
-# dockerfile, we have work to do before we
-# call this
-nginx_cmd = ["nginx", "-g", "daemon off;"]
+def create_conf(domain):
+    fullchain = os.path.join(LIVE_DIR, domain, 'fullchain.pem')
+    privkey = os.path.join(LIVE_DIR, domain, 'privkey.pem')
+
+    custom_include = ""
+    if os.path.exists("/etc/nginx/conf.d/custom/"):
+        custom_include = "/etc/nginx/conf.d/custom/*.conf;"
+
+    fp = os.path.join("/etc/nginx/conf.d", domain + ".conf")
+    with open(fp, "w") as fd:
+        fd.write(server_conf.format(
+            domain, 
+            fullchain, 
+            privkey, 
+            custom_include))
+
 
 def fail_with_error_message(msg):
     logging.error(msg)
@@ -47,7 +64,7 @@ def fail_with_error_message(msg):
 
 
 def certificates_exist(domain):
-    cert_path = os.path.join(LIVE_DIR, domain, "cert.pem")
+    cert_path = os.path.join(LIVE_DIR, domain, "privkey.pem")
     full_chain_path = os.path.join(LIVE_DIR, domain, "fullchain.pem")
     return os.path.exists(cert_path) and os.path.exists(full_chain_path)
 
@@ -67,14 +84,6 @@ def obtain_certs():
     except subprocess.CalledProcessError as err:
         fail_with_error_message("Command failed: {}".format(
             " ".join(certbot_cmd)))
-
-
-def create_conf(domain):
-    www_domain = ""
-    if domain[:3] != "www":
-        www_domain += "www" + domain
-    server_conf.format(
-        domain)
 
 
 def main():
@@ -106,7 +115,7 @@ def main():
             domain))
         obtain_certs()
 
-    # create the nginx conf file to reflect the new configuration
+    # create the .conf file to reflect the new configuration
     create_conf(domain)
 
     # call default nginx entrypoint, there is
