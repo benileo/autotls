@@ -30,7 +30,6 @@ RUN echo "deb http://ftp.debian.org/debian jessie-backports main" \
 
 
 COPY post-hook.sh /usr/local/bin/post-hook.sh
-COPY entrypoint.py .
-COPY tls.conf /etc/nginx/conf.d/tls.conf
 
+COPY entrypoint.py .
 ENTRYPOINT [ "./entrypoint.py" ]
