@@ -80,7 +80,7 @@ def create_conf(domain):
 
     custom_include = ""
     if os.path.exists("/etc/nginx/conf.d/custom/"):
-        custom_include = "/etc/nginx/conf.d/custom/*.conf;"
+        custom_include = "include /etc/nginx/conf.d/custom/*.conf;"
 
     fp = os.path.join("/etc/nginx/conf.d", domain + ".conf")
     with open(fp, "w") as fd:
