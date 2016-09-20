@@ -56,6 +56,9 @@ server {{
     # HSTS (ngx_http_headers_module is required) (15768000 seconds = 6 months)
     add_header Strict-Transport-Security max-age=15768000;
 
+    # A resolver must be set for resolving OCSP responder hostname
+    resolver 8.8.4.4 8.8.8.8;
+
     # If there is a conf file, these directives will
     # be added into the server block. If there is
     # no include directive here then you need to 
