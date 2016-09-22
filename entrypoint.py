@@ -2,29 +2,12 @@
 
 import os
 import logging
+import signal
 import subprocess
 import sys
 
 logging.basicConfig(level=logging.INFO)
 
-LIVE_DIR = "/etc/letsencrypt/live"
-
-certbot_cmd = [
-    "certbot",
-    "certonly",
-    "--standalone",
-    "--agree-tos",
-    "--must-staple",
-    "--rsa-key-size", "4096",
-    "--post-hook", "post-hook.sh",
-]
-
-# This is the default entrypoint for the nginx
-# dockerfile, we have work to do before we
-# call this
-nginx_cmd = ["nginx", "-g", "daemon off;"]
-
-# template
 server_conf = """
 server {{
     # Based on https://mozilla.github.io/server-side-tls/ssl-config-generator/
@@ -64,6 +47,9 @@ server {{
     # no include directive here then you need to 
     # create a conf file mounted in a volume in
     # /etc/nginx/conf.d/custom/
+    # 
+    # Note: adding duplicates to the directives defined 
+    # above will cause errors.
     {4}
 }}
 """
@@ -76,92 +62,165 @@ server {
 }
 """
 
-def create_conf(domain):
-    fullchain = os.path.join(LIVE_DIR, domain, 'fullchain.pem')
-    privkey = os.path.join(LIVE_DIR, domain, 'privkey.pem')
-    chain = os.path.join(LIVE_DIR, domain, 'chain.pem')
+
+class Certbot(object):
+
+    @classmethod
+    def create(cls):
+        domain = os.getenv("DOMAIN")
+        if not domain:
+            fail_with_error_message(
+                "DOMAIN must be passed as an env variable")
+
+        email = os.getenv("EMAIL")
+        if not email:
+            fail_with_error_message(
+                "EMAIL must be passed as an env variable")
+
+        certbot = Certbot(domain, email)
+
+        if os.getenv("STAGING"):
+            certbot.add_arg("--staging")
+
+        if os.getenv("SERVER"):
+            certbot.add_arg("--server", os.getenv("SERVER"))
+
+        if os.getenv("DEBUG"):
+            certbot.add_arg("-vvv", "--text")
+
+        return certbot
+
+
+    def __init__(self, domain, email):
+        self.domain = domain
+        self.email = email
+        
+        self.args = dict()
+        self.cmd = ["certbot", "certonly"]
+
+        self.add_arg("--standalone")
+        self.add_arg("--agree-tos")
+        self.add_arg("--must-staple")
+        self.add_arg("--rsa-key-size", "4096")
+        self.add_arg("--post-hook", "post-hook.sh")
+        self.add_arg("--domain", self.domain)
+        self.add_arg("--email", self.email)
+
+
+    def add_arg(self, key, value=None):
+        self.args[key] = value
+
+
+    def _should_run(self):
+        return not os.path.exists(self.live_dir_path("fullchain.pem"))
+
+    
+    def live_dir_path(self, arg):
+        bdir = "/etc/letsencrypt/live" 
+        return os.path.join(bdir, self.domain, arg)
+
+
+    def fullchain(self):
+        return self.live_dir_path("fullchain.pem")
+
+
+    def privkey(self):
+        return self.live_dir_path("privkey.pem")
+
+
+    def chain(self):
+        return self.live_dir_path("chain.pem")
+
+
+    def run(self):
+        if not self._should_run():
+            logging.info("certificates exist, not installing")
+            return
+
+        for k, v in self.args.iteritems():
+            self.cmd.append(k)
+            if v is not None:
+                self.cmd.append(v)
+
+        logging.info(
+            "obtaining certificates for {}".format(self.domain))
+
+        try:
+            subprocess.check_call(self.cmd)
+        except subprocess.CalledProcessError as err:
+            fail_with_error_message(
+                "Command failed: {}".format(" ".join(self.cmd)))
+
+
+def create_conf(certbot):
+    create_redirect()
 
     custom_include = ""
     if os.path.exists("/etc/nginx/conf.d/custom/"):
+        logging.info("Including custom configuration")
         custom_include = "include /etc/nginx/conf.d/custom/*.conf;"
 
-    fp = os.path.join("/etc/nginx/conf.d", domain + ".conf")
+    fp = os.path.join("/etc/nginx/conf.d", certbot.domain + ".conf")
     with open(fp, "w") as fd:
         fd.write(server_conf.format(
-            domain, 
-            fullchain, 
-            privkey,
-            chain, 
+            certbot.domain, 
+            certbot.fullchain(), 
+            certbot.privkey(),
+            certbot.chain(), 
             custom_include))
 
-    # create a redirect for http traffic
-    with open("/etc/nginx/conf.d/redirect.conf", "w") as fd:
-        fd.write(redirect_conf)
+    logging.info(
+        "Virtual host created for {}".format(certbot.domain))
+
 
 def fail_with_error_message(msg):
     logging.error(msg)
     sys.exit(1)
 
 
-def certificates_exist(domain):
-    cert_path = os.path.join(LIVE_DIR, domain, "privkey.pem")
-    full_chain_path = os.path.join(LIVE_DIR, domain, "fullchain.pem")
-    return os.path.exists(cert_path) and os.path.exists(full_chain_path)
-
-
-def dh_params_exist():
-    return os.path.exists('/etc/ssl/certs/dhparam.pem')
+def create_redirect():    
+    with open("/etc/nginx/conf.d/redirect.conf", "w") as fd:
+        fd.write(redirect_conf)
+    logging.info("http redirect created")
 
 
 def create_dh_params():
-    subprocess.check_call(["openssl", "dhparam" ,"-out", 
-        "/etc/ssl/certs/dhparam.pem", "2048"])
+    if os.path.exists('/etc/ssl/certs/dhparam.pem'):
+        return
 
-
-def obtain_certs():
-    try:
-        subprocess.check_call(certbot_cmd)
-    except subprocess.CalledProcessError as err:
-        fail_with_error_message("Command failed: {}".format(
-            " ".join(certbot_cmd)))
-
+    subprocess.check_call([
+        "openssl", 
+        "dhparam" ,
+        "-out", "/etc/ssl/certs/dhparam.pem",
+        "2048"])
 
 def main():
-    domain = os.getenv("DOMAIN")
-    if not domain:
-        fail_with_error_message("DOMAIN must be passed as an env variable")
-    certbot_cmd.extend(["--domain", domain])
+    # Start cron, needed for certificate renewal
+    logging.info("starting cron")
+    cron = subprocess.Popen(["cron", "-f"])
 
-    email = os.getenv("EMAIL")
-    if not email:
-        logging.error("EMAIL must be passed as an env variable")
-        sys.exit(1)
-    certbot_cmd.extend(["--email", email])
+    def kill_cron():
+        if cron.poll():
+            logging.info("Killing cron")
+            cron.kill()
 
-    if os.getenv("STAGING"):
-        certbot_cmd.extend(["--staging"])
+    # If we are ended early, make sure to kill cron
+    signal.signal(signal.SIGTERM, kill_cron)
+    signal.signal(signal.SIGINT, kill_cron)
 
-    if os.getenv("SERVER"):
-        certbot_cmd.extend(["--server", os.getenv("SERVER")])
+    # Get the TLS certificate
+    certbot = Certbot.create()
+    certbot.run()
 
-    if os.getenv("DEBUG"):
-        certbot_cmd.extend(["-vvv", "--text"])
+    # create necessary items for Nginx to start
+    create_conf(certbot)
+    create_dh_params()
 
-    if not dh_params_exist():
-        create_dh_params()
-
-    if not certificates_exist(domain):
-        logging.info("Certificates for {} don't exist yet".format(
-            domain))
-        obtain_certs()
-
-    # create the .conf file to reflect the new configuration
-    create_conf(domain)
-
-    # call default nginx entrypoint, there is
-    # no way to update this dynamically
-    logging.info("Starting nginx")
-    subprocess.check_call(nginx_cmd)
+    # This is the default entrypoint for the nginx
+    # dockerfile, we have work to do before we
+    # call this
+    logging.info("starting nginx")
+    subprocess.check_call(["nginx", "-g", "daemon off;"])
 
 
 if __name__ == "__main__":

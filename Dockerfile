@@ -23,7 +23,9 @@ RUN echo "deb http://ftp.debian.org/debian jessie-backports main" \
 	> /etc/apt/sources.list.d/certbot.list \
 	&& apt-get update \
 	&& apt-get install -y -t jessie-backports \
-		certbot \ 
+		certbot \
+		cron \
+		rsyslog \
 		--no-install-recommends \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& rm /etc/apt/sources.list.d/certbot.list
