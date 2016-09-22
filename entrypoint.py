@@ -64,7 +64,6 @@ server {
 
 
 class Certbot(object):
-
     @classmethod
     def create(cls):
         domain = os.getenv("DOMAIN")
@@ -90,11 +89,10 @@ class Certbot(object):
 
         return certbot
 
-
     def __init__(self, domain, email):
         self.domain = domain
         self.email = email
-        
+
         self.args = dict()
         self.cmd = ["certbot", "certonly"]
 
@@ -106,31 +104,24 @@ class Certbot(object):
         self.add_arg("--domain", self.domain)
         self.add_arg("--email", self.email)
 
-
     def add_arg(self, key, value=None):
         self.args[key] = value
-
 
     def _should_run(self):
         return not os.path.exists(self.live_dir_path("fullchain.pem"))
 
-    
     def live_dir_path(self, arg):
-        bdir = "/etc/letsencrypt/live" 
+        bdir = "/etc/letsencrypt/live"
         return os.path.join(bdir, self.domain, arg)
-
 
     def fullchain(self):
         return self.live_dir_path("fullchain.pem")
 
-
     def privkey(self):
         return self.live_dir_path("privkey.pem")
 
-
     def chain(self):
         return self.live_dir_path("chain.pem")
-
 
     def run(self):
         if not self._should_run():
@@ -163,10 +154,10 @@ def create_conf(certbot):
     fp = os.path.join("/etc/nginx/conf.d", certbot.domain + ".conf")
     with open(fp, "w") as fd:
         fd.write(server_conf.format(
-            certbot.domain, 
-            certbot.fullchain(), 
+            certbot.domain,
+            certbot.fullchain(),
             certbot.privkey(),
-            certbot.chain(), 
+            certbot.chain(),
             custom_include))
 
     logging.info(
@@ -178,7 +169,7 @@ def fail_with_error_message(msg):
     sys.exit(1)
 
 
-def create_redirect():    
+def create_redirect():
     with open("/etc/nginx/conf.d/redirect.conf", "w") as fd:
         fd.write(redirect_conf)
     logging.info("http redirect created")
@@ -189,10 +180,11 @@ def create_dh_params():
         return
 
     subprocess.check_call([
-        "openssl", 
-        "dhparam" ,
+        "openssl",
+        "dhparam",
         "-out", "/etc/ssl/certs/dhparam.pem",
         "2048"])
+
 
 def main():
     # Start cron, needed for certificate renewal
