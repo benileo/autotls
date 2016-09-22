@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import atexit
 import os
 import logging
 import signal
@@ -99,6 +100,7 @@ class Certbot(object):
         self.add_arg("--standalone")
         self.add_arg("--agree-tos")
         self.add_arg("--must-staple")
+        self.add_arg("--non-interactive")
         self.add_arg("--rsa-key-size", "4096")
         self.add_arg("--post-hook", "post-hook.sh")
         self.add_arg("--domain", self.domain)
@@ -161,7 +163,7 @@ def create_conf(certbot):
             custom_include))
 
     logging.info(
-        "Virtual host created for {}".format(certbot.domain))
+        "virtual host created for {}".format(certbot.domain))
 
 
 def fail_with_error_message(msg):
@@ -186,31 +188,40 @@ def create_dh_params():
         "2048"])
 
 
+processes = []
+
+
+def shutdown():
+    logging.info("exiting")
+    for p in processes:
+        if p.poll() is None:
+            logging.info("killed process {}".format(p.pid))
+            p.kill()
+
+
 def main():
-    # Start cron, needed for certificate renewal
-    logging.info("starting cron")
-    cron = subprocess.Popen(["cron", "-f"])
+    # make sure to kill started processes upon exit
+    atexit.register(shutdown)
 
-    def kill_cron():
-        if cron.poll():
-            logging.info("Killing cron")
-            cron.kill()
+    processes.append(subprocess.Popen(["rsyslogd", "-n"]))
+    logging.info("starting rsyslogd ({})".format(processes[0].pid))
 
-    # If we are ended early, make sure to kill cron
-    signal.signal(signal.SIGTERM, kill_cron)
-    signal.signal(signal.SIGINT, kill_cron)
+    processes.append(subprocess.Popen(["cron", "-f"]))
+    logging.info("starting cron ({})".format(processes[1].pid))
 
-    # Get the TLS certificate
+    # run certbot to get the tls certificate if not existing
     certbot = Certbot.create()
     certbot.run()
 
-    # create necessary items for Nginx to start
+    # create a nginx virtual host configuration file
     create_conf(certbot)
+
+    # by default openssl uses dh params of 1024 bits, this is
+    # not deemed as secure, so we generate dh params of 2048 bits
+    # this is slow, but necessary
     create_dh_params()
 
-    # This is the default entrypoint for the nginx
-    # dockerfile, we have work to do before we
-    # call this
+    # start nginx in the foreground
     logging.info("starting nginx")
     subprocess.check_call(["nginx", "-g", "daemon off;"])
 

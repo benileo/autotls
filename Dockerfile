@@ -32,6 +32,7 @@ RUN echo "deb http://ftp.debian.org/debian jessie-backports main" \
 
 
 COPY post-hook.sh /usr/local/bin/post-hook.sh
-
+COPY rsyslog.conf /etc/rsyslog.conf
 COPY entrypoint.py .
+
 ENTRYPOINT [ "./entrypoint.py" ]
