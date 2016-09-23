@@ -196,7 +196,7 @@ def shutdown():
     for p in processes:
         if p.poll() is None:
             logging.info("killed process {}".format(p.pid))
-            p.kill()
+            p.terminate()
 
 
 def main():
