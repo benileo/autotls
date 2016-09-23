@@ -3,7 +3,6 @@
 import atexit
 import os
 import logging
-import signal
 import subprocess
 import sys
 
