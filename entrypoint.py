@@ -54,14 +54,6 @@ server {{
 }}
 """
 
-redirect_conf = """
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    return 301 https://$host$request_uri;
-}
-"""
-
 
 class Certbot(object):
     @classmethod
@@ -145,8 +137,6 @@ class Certbot(object):
 
 
 def create_conf(certbot):
-    create_redirect()
-
     custom_include = ""
     if os.path.exists("/etc/nginx/conf.d/custom/"):
         logging.info("Including custom configuration")
@@ -168,12 +158,6 @@ def create_conf(certbot):
 def fail_with_error_message(msg):
     logging.error(msg)
     sys.exit(1)
-
-
-def create_redirect():
-    with open("/etc/nginx/conf.d/redirect.conf", "w") as fd:
-        fd.write(redirect_conf)
-    logging.info("http redirect created")
 
 
 def create_dh_params():
