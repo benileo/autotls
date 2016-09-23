@@ -178,6 +178,7 @@ def create_redirect():
 
 def create_dh_params():
     if os.path.exists('/etc/ssl/certs/dhparam.pem'):
+        logging.info("dh params exist already")
         return
 
     subprocess.check_call([
@@ -191,10 +192,10 @@ processes = []
 
 
 def shutdown():
-    logging.info("exiting")
+    logging.info("performing shutdown clean up")
     for p in processes:
         if p.poll() is None:
-            logging.info("killed process {}".format(p.pid))
+            logging.info("sending SIGTERM to pid {}".format(p.pid))
             p.terminate()
 
 
