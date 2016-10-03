@@ -30,6 +30,7 @@ RUN echo "deb http://ftp.debian.org/debian jessie-backports main" \
 	&& rm -rf /var/lib/apt/lists/* \
 	&& rm /etc/apt/sources.list.d/certbot.list
 
+RUN openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
 
 COPY post-hook.sh /usr/local/bin/post-hook.sh
 COPY rsyslog.conf /etc/rsyslog.conf
