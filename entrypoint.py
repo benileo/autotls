@@ -177,18 +177,6 @@ def create_redirect():
     logging.info("http redirect created")
 
 
-def create_dh_params():
-    if os.path.exists('/etc/ssl/certs/dhparam.pem'):
-        logging.info("dh params exist already")
-        return
-
-    subprocess.check_call([
-        "openssl",
-        "dhparam",
-        "-out", "/etc/ssl/certs/dhparam.pem",
-        "2048"])
-
-
 processes = []
 
 
@@ -216,11 +204,6 @@ def main():
 
     # create a nginx virtual host configuration file
     create_conf(certbot)
-
-    # by default openssl uses dh params of 1024 bits, this is
-    # not deemed as secure, so we generate dh params of 2048 bits
-    # this is slow, but necessary
-    create_dh_params()
 
     # start nginx in the foreground
     logging.info("starting nginx")
