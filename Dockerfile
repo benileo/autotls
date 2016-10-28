@@ -23,6 +23,15 @@ RUN set -e \
     && pip install acme certbot
 
 RUN set -e \
+    && mkdir /etc/nginx/ssl \
+    && openssl req -x509 -nodes \
+        -days 36500 \
+        -newkey rsa:4096 \
+        -subj /CN=selfsigned \
+        -keyout /etc/nginx/ssl/nginx.key \
+        -out /etc/nginx/ssl/nginx.crt
+
+RUN set -e \
     && apt-get remove -y --purge curl \
     && apt-get autoremove -y \
     && apt-get clean \
