@@ -2,6 +2,8 @@ FROM nginx:1.11.3
 
 MAINTAINER BenJammin Irving "jammin.irving@gmail.com"
 
+RUN rm /etc/nginx/conf.d/default.conf
+
 RUN openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
 
 RUN apt-get update && apt-get install -y \
