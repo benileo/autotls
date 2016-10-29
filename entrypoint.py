@@ -3,6 +3,7 @@
 import atexit
 import os
 import logging
+import signal
 import subprocess
 import sys
 
@@ -57,10 +58,8 @@ server {{
 PROXY_CONFIG = """
 server {
     listen 443 default_server;
-
     ssl_certificate /etc/nginx/ssl/nginx.crt;
     ssl_certificate_key /etc/nginx/ssl/nginx.key;
-
     location / {
         proxy_pass http://localhost:80;
     }
@@ -107,64 +106,81 @@ class Certbot(object):
     def __init__(self, config):
         self.args = dict()
         self.config = config
+        self.domain = self.config.get("domain")
+        self.email = self.config.get("email")
         self.cmd = ["certbot", "certonly"]
-        self.domain = config.get("domain")
 
+        self.add_arg("--domain", self.domain)
+        self.add_arg("--email", self.email)
         self.add_arg("--standalone")
+        self.add_arg("--non-interactive")
         self.add_arg("--agree-tos")
         self.add_arg("--must-staple")
-        self.add_arg("--non-interactive")
-        self.add_arg("--rsa-key-size", "4096")
-        self.add_arg("--preferred-challenges", "http-01")
-        self.add_arg("--post-hook", "post-hook.sh")
-        self.add_arg("--domain", self.domain)
-        self.add_arg("--email", config.get("email"))
-
-        if self.config.get("staging") is not None:
+        if self.config.get("staging"):
             self.add_arg("--staging")
-
-        if self.config.get("server") is not None:
-            self.add_arg("--server", self.config.get("server"))
-
         if self.config.get("debug"):
             self.add_arg("-vvv", "--text")
+
+        # We must use HTTP-01 - as we will be using TLS-SNI raw packet routing
+        # in front of this.
+        self.add_arg("--preferred-challenges", "http-01")
+
+        # Is this necessary..?
+        # self.add_arg("--post-hook", "post-hook.sh")
+
+        # To which ACME server are we talking too?
+        if self.config.get("server"):
+            self.add_arg("--server", self.config.get("server"))
 
     def add_arg(self, key, value=None):
         self.args[key] = value
 
     def run(self):
+        """
+        Build the certbot command array using self.args
+        :return: None
+        """
         for k, v in self.args.iteritems():
             self.cmd.append(k)
             if v is not None:
                 self.cmd.append(v)
 
         logging.info("obtaining certificates for {}".format(self.domain))
-
         try:
             subprocess.check_call(self.cmd)
         except subprocess.CalledProcessError as err:
+            # ouch, these should be handled better.
             fail_with_error_message(
                 "Command failed: {}\nError: {}".format(" ".join(self.cmd), err))
 
 
-class ReverseProxy(object):
+class Nginx(object):
     handle = None
     config_path = "/etc/nginx/conf.d/reverse_proxy.conf"
 
     @classmethod
     def start(cls):
-        cls._write_config()
-        cls.handle = Process.start(NGINX_CMD)
+        if cls.handle is None:
+            logging.info("starting nginx")
+            cls.handle = Process.start(NGINX_CMD)
 
     @classmethod
-    def _write_config(cls):
+    def write_proxy_config(cls):
         with open(cls.config_path, "w") as fo:
             fo.write(PROXY_CONFIG)
 
     @classmethod
-    def stop(cls):
-        Process.terminate(cls.handle)
+    def remove_proxy_config(cls):
         os.remove(cls.config_path)
+
+    @classmethod
+    def reload(cls):
+        logging.info("reloading nginx")
+        cls.handle.send_signal(signal.SIGHUP)
+
+    @classmethod
+    def communicate(cls):
+        cls.handle.communicate()
 
 
 class Process(object):
@@ -174,36 +190,32 @@ class Process(object):
     def add(cls, process):
         if not isinstance(process, subprocess.Popen):
             raise ValueError('argument must be of type Popen')
-
         cls.processes.append(process)
 
     @classmethod
     def start(cls, cmd, add=True):
         if not isinstance(cmd, list):
             raise ValueError('arguments must be of type list')
-
-        handle = subprocess.Popen(cmd)
+        handle = subprocess.Popen(cmd, stdout=sys.stderr, stderr=sys.stderr)
         logging.info("started {} ({})".format(cmd[0], handle.pid))
-
         if add:
             cls.add(handle)
 
         return handle
 
     @classmethod
-    def terminate(cls, handle):
+    def kill(cls, handle):
         if not isinstance(handle, subprocess.Popen):
             raise ValueError('argument must of type Popen')
-
-        logging.info("sending SIGTERM to pid {}".format(handle.pid))
-        handle.terminate()
+        logging.info("sending SIGKILL to pid {}".format(handle.pid))
+        handle.kill()
 
     @classmethod
     def kill_all(cls):
         logging.info("performing shutdown clean up")
         for process in cls.processes:
             if process.poll() is None:
-                cls.terminate(process)
+                cls.kill(process)
 
 
 def should_obtain_certificates(domain):
@@ -222,6 +234,14 @@ def live_dir_path(domain, path):
 
 
 def create_nginx_config_file(domain):
+    """
+    TODO: make this nicer, oh my goodness!
+
+    :idea use an nginx parser - or have a different way of creating the nginx
+    config, this is very inflexible. would the cerbot nginx plugin be useful?
+    :param domain:
+    :return:
+    """
     custom_include = ""
     if os.path.exists("/etc/nginx/conf.d/custom/"):
         logging.info("Including custom configuration")
@@ -235,7 +255,6 @@ def create_nginx_config_file(domain):
             live_dir_path(domain, PRIVATE_KEY),
             live_dir_path(domain, CHAIN),
             custom_include))
-
     logging.info(
         "virtual host created for {}".format(domain))
 
@@ -246,6 +265,15 @@ def fail_with_error_message(msg):
 
 
 def parse_environment():
+    """
+    We should be loading the config into an object that represent the environ
+
+    Maybe we piggy back on OS.environ (since this is the way they arrive)
+
+    Or what about if the container was ran like docker run domain email
+    we only really care if the domain and email exists
+    :return:
+    """
     config = Config()
 
     if not os.getenv("DOMAIN"):
@@ -271,15 +299,17 @@ def main():
     Process.start(["cron", "-f"])
 
     if should_obtain_certificates(config.get("domain")):
-        ReverseProxy.start()
+        Nginx.write_proxy_config()
+        Nginx.start()
         Certbot(config).run()
-        ReverseProxy.stop()
+        Nginx.remove_proxy_config()
+        Nginx.reload()
 
+    # yuck
     create_nginx_config_file(config.get("domain"))
 
-    logging.info("starting nginx in the foreground")
-    subprocess.check_call(NGINX_CMD)
-
+    Nginx.start()
+    Nginx.communicate()
 
 if __name__ == "__main__":
     main()

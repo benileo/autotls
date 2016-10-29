@@ -42,7 +42,6 @@ RUN set -e \
         /tmp/* \
         /var/tmp/*
 
-COPY post-hook.sh /usr/local/bin/post-hook.sh
 COPY rsyslog.conf /etc/rsyslog.conf
 COPY entrypoint.py .
 
