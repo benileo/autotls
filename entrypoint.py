@@ -7,7 +7,6 @@ import signal
 import subprocess
 import sys
 import threading
-import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -100,7 +99,6 @@ class Config(object):
     def get(self, key, default=None):
         if hasattr(self, key):
             return self.__getattribute__(key)
-
         return default
 
 
@@ -119,21 +117,18 @@ class Certbot(object):
         self.add_arg("--non-interactive")
         self.add_arg("--agree-tos")
         self.add_arg("--must-staple")
+
         if self.config.get("staging"):
             self.add_arg("--staging")
         if self.config.get("debug"):
             self.add_arg("-vvv", "--text")
-
-        # We must use HTTP-01 - as we will be using TLS-SNI raw packet routing
-        # in front of this.
-        self.add_arg("--preferred-challenges", "http-01")
-
-        # Is this necessary..?
-        # self.add_arg("--post-hook", "post-hook.sh")
-
-        # To which ACME server are we talking too?
         if self.config.get("server"):
             self.add_arg("--server", self.config.get("server"))
+
+        # We must use HTTP-01 - as we will be using TLS-SNI raw packet routing
+        # in front of this and TLS-SNI based challenges use the reserved name
+        # acme.invalid
+        self.add_arg("--preferred-challenges", "http-01")
 
     def add_arg(self, key, value=None):
         self.args[key] = value
@@ -151,7 +146,7 @@ class Certbot(object):
         logging.info("obtaining certificates for {}".format(self.domain))
         try:
             subprocess.check_call(self.cmd)
-        except subprocess.CalledProcessError as err:
+        except subprocess.CalledProcessError:
             # ouch, these should be handled better.
             fail_with_error_message(
                 "Command failed: {}".format(" ".join(self.cmd)))
@@ -176,7 +171,8 @@ class Nginx(object):
 
     @classmethod
     def remove_proxy_config(cls):
-        os.remove(cls.config_path)
+        if os.path.exists(cls.config_path):
+            os.remove(cls.config_path)
 
     @classmethod
     def reload(cls):
@@ -188,19 +184,12 @@ class Process(object):
     processes = []
 
     @classmethod
-    def add(cls, process):
-        if not isinstance(process, subprocess.Popen):
-            raise ValueError('argument must be of type Popen')
-        cls.processes.append(process)
-
-    @classmethod
     def start(cls, cmd, add=True):
         if not isinstance(cmd, list):
             raise ValueError('arguments must be of type list')
         handle = subprocess.Popen(cmd)
         logging.info("started {} ({})".format(cmd[0], handle.pid))
-        if add:
-            cls.add(handle)
+        cls.processes.append(handle)
 
         return handle
 
@@ -292,30 +281,28 @@ def parse_environment():
     return config
 
 
-def worker(certbot):
-    if should_obtain_certificates(certbot.domain):
-        Nginx.lock.acquire()
-        logging.info('lock acquired')
-        certbot.run()
-        Nginx.remove_proxy_config()
-        create_nginx_config_file(certbot.domain)
-        Nginx.reload()
+def run_certbot(certbot):
+    Nginx.lock.acquire()
+    certbot.run()
+    Nginx.remove_proxy_config()
+    create_nginx_config_file(certbot.domain)
+    Nginx.reload()
 
 
 def main():
     atexit.register(Process.kill_all)
     config = parse_environment()
+    domain = config.get("domain")
 
     Process.start(["rsyslogd", "-n"])
     Process.start(["cron", "-f"])
 
     Nginx.lock.acquire()
-
-    thread = threading.Thread(target=worker, args=(Certbot(config),))
-    thread.start()
-
-    if should_obtain_certificates(config.get("domain")):
+    if should_obtain_certificates(domain):
         Nginx.write_proxy_config()
+        threading.Thread(target=run_certbot, args=(Certbot(config),)).start()
+    else:
+        create_nginx_config_file(domain)
 
     Nginx.start()
 
