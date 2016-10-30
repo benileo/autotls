@@ -2,6 +2,8 @@ FROM nginx:1.11.3
 
 MAINTAINER BenJammin Irving "jammin.irving@gmail.com"
 
+RUN rm /etc/nginx/conf.d/default.conf
+
 RUN openssl dhparam -out /etc/ssl/certs/dhparam.pem 2048
 
 RUN apt-get update && apt-get install -y \
@@ -23,6 +25,15 @@ RUN set -e \
     && pip install acme certbot
 
 RUN set -e \
+    && mkdir /etc/nginx/ssl \
+    && openssl req -x509 -nodes \
+        -days 3650 \
+        -newkey rsa:4096 \
+        -subj /CN=selfsigned \
+        -keyout /etc/nginx/ssl/nginx.key \
+        -out /etc/nginx/ssl/nginx.crt
+
+RUN set -e \
     && apt-get remove -y --purge curl \
     && apt-get autoremove -y \
     && apt-get clean \
@@ -31,7 +42,6 @@ RUN set -e \
         /tmp/* \
         /var/tmp/*
 
-COPY post-hook.sh /usr/local/bin/post-hook.sh
 COPY rsyslog.conf /etc/rsyslog.conf
 COPY entrypoint.py .
 
