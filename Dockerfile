@@ -27,7 +27,7 @@ RUN set -e \
 RUN set -e \
     && mkdir /etc/nginx/ssl \
     && openssl req -x509 -nodes \
-        -days 36500 \
+        -days 3650 \
         -newkey rsa:4096 \
         -subj /CN=selfsigned \
         -keyout /etc/nginx/ssl/nginx.key \

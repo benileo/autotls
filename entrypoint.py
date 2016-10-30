@@ -6,6 +6,8 @@ import logging
 import signal
 import subprocess
 import sys
+import threading
+import time
 
 logging.basicConfig(level=logging.INFO)
 
@@ -57,11 +59,12 @@ server {{
 
 PROXY_CONFIG = """
 server {
-    listen 443 default_server;
+    listen 443 ssl;
+    server_name _;
     ssl_certificate /etc/nginx/ssl/nginx.crt;
     ssl_certificate_key /etc/nginx/ssl/nginx.key;
     location / {
-        proxy_pass http://localhost:80;
+        proxy_pass http://localhost;
     }
 }
 """
@@ -151,18 +154,20 @@ class Certbot(object):
         except subprocess.CalledProcessError as err:
             # ouch, these should be handled better.
             fail_with_error_message(
-                "Command failed: {}\nError: {}".format(" ".join(self.cmd), err))
+                "Command failed: {}".format(" ".join(self.cmd)))
 
 
 class Nginx(object):
     handle = None
     config_path = "/etc/nginx/conf.d/reverse_proxy.conf"
+    lock = threading.Lock()
 
     @classmethod
     def start(cls):
         if cls.handle is None:
-            logging.info("starting nginx")
             cls.handle = Process.start(NGINX_CMD)
+            cls.lock.release()
+            cls.handle.wait()  # wait forever
 
     @classmethod
     def write_proxy_config(cls):
@@ -178,10 +183,6 @@ class Nginx(object):
         logging.info("reloading nginx")
         cls.handle.send_signal(signal.SIGHUP)
 
-    @classmethod
-    def communicate(cls):
-        cls.handle.communicate()
-
 
 class Process(object):
     processes = []
@@ -196,7 +197,7 @@ class Process(object):
     def start(cls, cmd, add=True):
         if not isinstance(cmd, list):
             raise ValueError('arguments must be of type list')
-        handle = subprocess.Popen(cmd, stdout=sys.stderr, stderr=sys.stderr)
+        handle = subprocess.Popen(cmd)
         logging.info("started {} ({})".format(cmd[0], handle.pid))
         if add:
             cls.add(handle)
@@ -291,6 +292,16 @@ def parse_environment():
     return config
 
 
+def worker(certbot):
+    if should_obtain_certificates(certbot.domain):
+        Nginx.lock.acquire()
+        logging.info('lock acquired')
+        certbot.run()
+        Nginx.remove_proxy_config()
+        create_nginx_config_file(certbot.domain)
+        Nginx.reload()
+
+
 def main():
     atexit.register(Process.kill_all)
     config = parse_environment()
@@ -298,18 +309,17 @@ def main():
     Process.start(["rsyslogd", "-n"])
     Process.start(["cron", "-f"])
 
+    Nginx.lock.acquire()
+
+    thread = threading.Thread(target=worker, args=(Certbot(config),))
+    thread.start()
+
     if should_obtain_certificates(config.get("domain")):
         Nginx.write_proxy_config()
-        Nginx.start()
-        Certbot(config).run()
-        Nginx.remove_proxy_config()
-        Nginx.reload()
-
-    # yuck
-    create_nginx_config_file(config.get("domain"))
 
     Nginx.start()
-    Nginx.communicate()
 
 if __name__ == "__main__":
     main()
+
+
