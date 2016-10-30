@@ -5,7 +5,7 @@ BOULDER_DIR=${1:-${BOULDER_DIR}}
 ACME_SERVER="http://127.0.0.1:4000/directory"
 
 function boulder_is_running {
-    curl ${ACME_SERVER} --silent && echo
+    curl ${ACME_SERVER} --silent > /dev/null
 }
 
 function start_boulder {
@@ -29,24 +29,26 @@ function start_boulder {
 }
 
 function start_redirect {
-    kill -9 $(netstat -lntp 2> /dev/null | grep 5002 | awk '{print $7}' | tr "/" "\n" | head -n 1) || true
+    kill -9 $(netstat -lntp 2> /dev/null | grep 5002 | awk '{print $7}' | tr "/" "\n" | head -n 1) > /dev/null 2> /dev/null || true
     python redirect.py &
 }
 
-function docker-run {
-    docker run \
-        --rm \
+function test_with_correct_env_vars {
+    local container_id=$(docker run -d \
         --network=host \
         -e SERVER=http://127.0.0.1:4000/directory \
-        -e DOMAIN=$1 \
-        -e EMAIL=$2 \
-        ${IMAGE}
+        -e DOMAIN=le1.wtf \
+        -e EMAIL=test@example.com \
+        ${IMAGE})
+
+    # look for stuff, certificate.. etc..
 }
 
-function test_with_correct_env_vars {
-    docker-run le1.wtf test@example.com
+function cleanup {
+    kill $(jobs -p)
 }
 
 start_boulder
 start_redirect
 test_with_correct_env_vars
+cleanup
