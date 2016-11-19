@@ -155,13 +155,13 @@ class Certbot(object):
 class Nginx(object):
     handle = None
     config_path = "/etc/nginx/conf.d/reverse_proxy.conf"
-    lock = threading.Lock()
+    start_lock = threading.Lock()
 
     @classmethod
     def start(cls):
         if cls.handle is None:
             cls.handle = Process.start(NGINX_CMD)
-            cls.lock.release()
+            cls.start_lock.release()
             cls.handle.wait()  # wait forever
 
     @classmethod
@@ -282,7 +282,7 @@ def parse_environment():
 
 
 def run_certbot(certbot):
-    Nginx.lock.acquire()
+    Nginx.start_lock.acquire()
     certbot.run()
     Nginx.remove_proxy_config()
     create_nginx_config_file(certbot.domain)
@@ -297,7 +297,7 @@ def main():
     Process.start(["rsyslogd", "-n"])
     Process.start(["cron", "-f"])
 
-    Nginx.lock.acquire()
+    Nginx.start_lock.acquire()
     if should_obtain_certificates(domain):
         Nginx.write_proxy_config()
         threading.Thread(target=run_certbot, args=(Certbot(config),)).start()

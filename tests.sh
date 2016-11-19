@@ -34,14 +34,12 @@ function start_redirect {
 }
 
 function test_with_correct_env_vars {
-    local container_id=$(docker run -d \
+    local container_id=$(docker run \
         --network=host \
         -e SERVER=http://127.0.0.1:4000/directory \
         -e DOMAIN=le1.wtf \
         -e EMAIL=test@example.com \
         ${IMAGE})
-
-    # look for stuff, certificate.. etc..
 }
 
 function cleanup {
