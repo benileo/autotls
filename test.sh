@@ -93,12 +93,13 @@ docker run \
     -e SERVER=http://127.0.0.1:4000/directory \
     -e DOMAIN=le1.wtf \
     -e EMAIL=test@example.com \
+    -e DEBUG=1 \
     -v ${temp_dir}/letsencrypt:/etc/letsencrypt \
     ${IMAGE} &
 
 container_pid2=$!
 {
-    sleep 15
+    sleep 30
     kill -2 ${container_pid2}
 } &
 

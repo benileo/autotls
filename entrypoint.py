@@ -1,6 +1,5 @@
 #!/usr/bin/python
 
-import atexit
 import os
 import logging
 import signal
@@ -76,9 +75,15 @@ CHAIN = "chain.pem"
 
 NGINX_CMD = ["/usr/sbin/nginx", "-g", "daemon off;"]
 
-NGINX_RENEW_CMD = ("""certbot renew --pre-hook 'nginx -s stop; sleep 2' """
-                   """--preferred-challenges http-01 --agree-tos """
-                   """--standalone --must-staple """)
+# NOTE: Send 1 for reload and send 3 for stop.
+# SIGHUP        1       Term    Hangup detected on controlling terminal
+# SIGQUIT       3       Core    Quit from keyboard
+NGINX_RENEW_CMD = (
+    """certbot renew --preferred-challenges http-01 """
+    """--standalone --must-staple --agree-tos """
+    """--pre-hook 'kill -1 `cat /var/run/nginx.pid`; sleep 2' """
+    """--post-hook 'kill -3 `cat /var/run/nginx.pid`; sleep 2' """
+)
 
 NGINX_FORCE_RENEW_CMD = NGINX_RENEW_CMD + "--force-renewal"
 
@@ -189,7 +194,7 @@ class Nginx(object):
                 break
             cls._running = False
             cls._handle = None
-            logging.debug('nginx process has stopped')
+            logging.debug('nginx process has been stopped')
             if cls._exiting:
                 break
 
@@ -272,6 +277,12 @@ def create_nginx_config_file(domain):
         "virtual host created for {}".format(domain))
 
 
+def remove_nginx_config_file(domain):
+    config_path = os.path.join("/etc/nginx/conf.d", domain + ".conf")
+    if os.path.exists(config_path):
+        os.remove(config_path)
+
+
 def fail_with_error_message(msg):
     logging.error(msg)
     sys.exit(1)
@@ -351,9 +362,13 @@ def run_renewer(config, queue):
     wait_for_nginx()
     Certbot.done_lock.acquire()
     logging.info('starting renewer')
+    time.sleep(2)  # not in a rush
     while 1:
         # try and renew right away - to see if anything will go wrong.
+        logging.info('starting renewal process - disallow nginx start')
         Nginx.disallow_start()  # Nginx is locked and won't restart
+        remove_nginx_config_file(config.domain)  # remove it first
+        Nginx.write_proxy_config()
         try:
             if config.debug:
                 subprocess.check_call(NGINX_FORCE_RENEW_CMD, shell=True)
@@ -362,6 +377,9 @@ def run_renewer(config, queue):
         except subprocess.CalledProcessError as perr:
             logging.debug("renewer: error renewing certificate: %s", perr)
         finally:
+            Nginx.remove_proxy_config()
+            create_nginx_config_file(config.domain)
+            logging.info('ending renewal process - allow nginx start')
             Nginx.allow_start()
             for i in range(1800):
                 try:
@@ -389,7 +407,7 @@ def main():
     exiting = Queue.Queue(maxsize=1)
     signal.signal(signal.SIGTERM, sigterm_handler)
     # run renewal loop in a thread
-    renewer = threading.Thread(target=run_renewer, args=(config,exiting))
+    renewer = threading.Thread(target=run_renewer, args=(config, exiting))
     renewer.start()
 
     # Case 1: we don't have a certificate yet
@@ -406,8 +424,8 @@ def main():
     # ran it.
     else:
         logging.info('we already have the existing certificates')
-        Certbot.done_lock.release()
         create_nginx_config_file(domain)
+        Certbot.done_lock.release()
 
     Nginx.run_forever()
     exiting.put(True)
