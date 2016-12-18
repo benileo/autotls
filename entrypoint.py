@@ -80,7 +80,7 @@ NGINX_CMD = ["/usr/sbin/nginx", "-g", "daemon off;"]
 # SIGQUIT       3       Core    Quit from keyboard
 NGINX_RENEW_CMD = (
     """certbot renew --preferred-challenges http-01 """
-    """--standalone --must-staple --agree-tos """
+    """--standalone --must-staple --agree-tos --quiet """
     """--pre-hook 'kill -1 `cat /var/run/nginx.pid`; sleep 2' """
     """--post-hook 'kill -3 `cat /var/run/nginx.pid`; sleep 2' """
 )
